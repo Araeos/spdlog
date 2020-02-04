@@ -12,7 +12,7 @@ endif()
 find_package(Threads REQUIRED)
 find_package(benchmark CONFIG REQUIRED)
 
-add_executable(bench bench.cpp)
+add_executable(bench bench.cpp ../include/mpmp_queue.hpp ../include/concurrentqueue.h ../include/blockingconcurrentqueue.h ../include/lightweightsemaphore.h)
 spdlog_enable_warnings(bench)
 target_link_libraries(bench PRIVATE spdlog::spdlog)
 

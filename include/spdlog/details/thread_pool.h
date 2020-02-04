@@ -7,6 +7,11 @@
 #include <spdlog/details/mpmc_blocking_q.h>
 #include <spdlog/details/os.h>
 
+#include "concurrentqueue.h"
+#include "blockingconcurrentqueue.h"
+
+#include "mpmp_queue.hpp"
+
 #include <chrono>
 #include <memory>
 #include <thread>
@@ -79,11 +84,95 @@ struct async_msg : log_msg_buffer
     {}
 };
 
+template<typename T>
+class ConcurrentQueueAdapter
+{
+public:
+    using item_type = T;
+
+    ConcurrentQueueAdapter(std::size_t bound)
+        : m_queue(bound)
+    {
+        // Bound not implemented.
+    }
+    void enqueue(T&& item) {
+        m_queue.enqueue(std::move(item));
+    }
+    void enqueue_nowait(T&& item) {
+        m_queue.enqueue(std::move(item));
+    }
+    bool dequeue_for(T& popped_item, std::chrono::milliseconds wait_duration)
+    {
+        return m_queue.wait_dequeue_timed(popped_item, wait_duration);
+    }
+    size_t overrun_counter() { return 0; }
+private:
+    struct QueueTraits : public moodycamel::ConcurrentQueueDefaultTraits
+    {
+        static const size_t BLOCK_SIZE = 32;
+        static const size_t IMPLICIT_INITIAL_INDEX_SIZE = 32;
+        static const size_t INITIAL_IMPLICIT_PRODUCER_HASH_SIZE = 32;
+    };
+    moodycamel::BlockingConcurrentQueue<T, QueueTraits> m_queue;
+};
+
+template<typename T>
+class MPMCQueueAdapter
+{
+public:
+    using item_type = T;
+
+    MPMCQueueAdapter(std::size_t bound)
+        : m_queue(bound)
+    { }
+    void enqueue(T&& item) {
+        int n = 0;
+        while (!m_queue.enqueue(std::move(item))) {
+            spin(n++);
+        }
+    }
+    void enqueue_nowait(T&& item) {
+        // TODO: Drop oldest entry and replace with this new item if the queue is full.
+        // TODO: Implement overrun counter.
+        m_queue.enqueue(std::move(item));
+    }
+    bool dequeue_for(T& popped_item, std::chrono::milliseconds wait_duration)
+    {
+        // TODO: Implement resource friendly waiting using for example C++20 atomics wait.
+        const auto start = std::chrono::high_resolution_clock::now();
+        int n = 0;
+        while (!m_queue.dequeue(popped_item)) {
+            if ((std::chrono::high_resolution_clock::now() - start) > wait_duration)
+                return false;
+            spin(n++);
+        }
+        return true;
+    }
+    // TODO: Implement overrun counter.
+    size_t overrun_counter() { return 0; }
+private:
+    // TODO: Tweak backoff thresholds
+    inline void spin(int n) {
+        if (n < 300) {
+            _mm_pause();
+        }
+        else if (n < 1000) {
+            std::this_thread::yield();
+        }
+        else {
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
+    }
+    mpmc_bounded_queue<T> m_queue;
+};
+
 class thread_pool
 {
 public:
     using item_type = async_msg;
-    using q_type = details::mpmc_blocking_queue<item_type>;
+    //using q_type = details::mpmc_blocking_queue<item_type>;
+    //using q_type = ConcurrentQueueAdapter<item_type>;
+    using q_type = MPMCQueueAdapter<item_type>;
 
     thread_pool(size_t q_max_items, size_t threads_n, std::function<void()> on_thread_start);
     thread_pool(size_t q_max_items, size_t threads_n);

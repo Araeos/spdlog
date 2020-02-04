@@ -6,6 +6,7 @@
 //
 // bench.cpp : spdlog benchmarks
 //
+#include "spdlog/async.h"
 #include "spdlog/spdlog.h"
 #include "spdlog/sinks/basic_file_sink.h"
 #include "spdlog/sinks/daily_file_sink.h"
@@ -69,6 +70,42 @@ void bench_threaded_logging(int threads, int iters)
     bench(iters, empty_logger_tracing);
 }
 
+void bench_async_logging(int threads, int iters)
+{
+    spdlog::info("**************************************************************");
+    spdlog::info("Async threaded: {:n} threads, {:n} messages", threads, iters);
+    spdlog::info("**************************************************************");
+
+    auto basic_mt = spdlog::basic_logger_mt<spdlog::async_factory>("basic_mt", "logs/basic_mt.log", true);
+    bench_mt(iters, std::move(basic_mt), threads);
+    auto basic_mt_tracing = spdlog::basic_logger_mt<spdlog::async_factory>("basic_mt/backtrace-on", "logs/basic_mt.log", true);
+    basic_mt_tracing->enable_backtrace(32);
+    bench_mt(iters, std::move(basic_mt_tracing), threads);
+
+    spdlog::info("");
+    auto rotating_mt = spdlog::rotating_logger_mt<spdlog::async_factory>("rotating_mt", "logs/rotating_mt.log", file_size, rotating_files);
+    bench_mt(iters, std::move(rotating_mt), threads);
+    auto rotating_mt_tracing = spdlog::rotating_logger_mt<spdlog::async_factory>("rotating_mt/backtrace-on", "logs/rotating_mt.log", file_size, rotating_files);
+    rotating_mt_tracing->enable_backtrace(32);
+    bench_mt(iters, std::move(rotating_mt_tracing), threads);
+
+    spdlog::info("");
+    auto daily_mt = spdlog::daily_logger_mt<spdlog::async_factory>("daily_mt", "logs/daily_mt.log");
+    bench_mt(iters, std::move(daily_mt), threads);
+    auto daily_mt_tracing = spdlog::daily_logger_mt<spdlog::async_factory>("daily_mt/backtrace-on", "logs/daily_mt.log");
+    daily_mt_tracing->enable_backtrace(32);
+    bench_mt(iters, std::move(daily_mt_tracing), threads);
+
+    spdlog::info("");
+    auto empty_logger = std::make_shared<spdlog::logger>("level-off");
+    empty_logger->set_level(spdlog::level::off);
+    bench(iters, empty_logger);
+    auto empty_logger_tracing = std::make_shared<spdlog::logger>("level-off/backtrace-on");
+    empty_logger_tracing->set_level(spdlog::level::off);
+    empty_logger_tracing->enable_backtrace(32);
+    bench(iters, empty_logger_tracing);
+}
+
 void bench_single_threaded(int iters)
 {
     spdlog::info("**************************************************************");
@@ -105,13 +142,23 @@ void bench_single_threaded(int iters)
     empty_logger_tracing->enable_backtrace(32);
     bench(iters, empty_logger_tracing);
 }
-
+#include <iostream>
+#include <chrono>
+#include <thread>
 int main(int argc, char *argv[])
 {
     spdlog::set_automatic_registration(false);
     spdlog::default_logger()->set_pattern("[%^%l%$] %v");
-    int iters = 250000;
-    int threads = 4;
+    spdlog::init_thread_pool(1 << 15, 1);
+    int iters = 1000000;
+    int threads = 10;
+
+    //auto async_logger = spdlog::basic_logger_mt<spdlog::async_factory>("async_file_logger", "logs/async_log.txt");
+    //bench_mt(1000000, std::move(async_logger), 10);
+    //std::cout << "Finished" << std::endl;
+    //using namespace std::chrono_literals;
+    //std::this_thread::sleep_for(300000s);
+
     try
     {
 
@@ -123,6 +170,8 @@ int main(int argc, char *argv[])
         bench_single_threaded(iters);
         bench_threaded_logging(1, iters);
         bench_threaded_logging(threads, iters);
+        bench_async_logging(1, iters);
+        bench_async_logging(threads, iters);
     }
     catch (std::exception &ex)
     {
